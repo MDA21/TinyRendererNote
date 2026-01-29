@@ -1,0 +1,20 @@
+#pragma once
+#include <string>
+#include <vector>
+#include "vector.h"
+
+class Model
+{
+public:
+	Model(const std::string& filename);
+	int nverts() const;		//返回顶点数量
+	int nfaces() const;		//返回面数量
+	Vec3f vert(const int i) const;		//返回第i个顶点坐标
+	Vec3f vert(const int iface, const int nthvert) const;		//返回第iface个面第nthvert个顶点坐标
+
+private:
+	std::vector<Vec3f> verts;
+	std::vector<std::vector<int>> faces;
+};
+
+void Log(const std::string& message);

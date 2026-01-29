@@ -330,4 +330,6 @@ int main(int argc, char** argv) {
 
 ### 结果与复盘
 
-我们会得到以下图片：![diablo1](images\chap1\diablo1.png)
+我们会得到以下图片：![diablo1](images/chap1/diablo1.png)
+
+复盘待补

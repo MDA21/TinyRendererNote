@@ -330,6 +330,120 @@ int main(int argc, char** argv) {
 
 ### 结果与复盘
 
+#### 结果
+
 我们会得到以下图片：![diablo1](images/chap1/diablo1.png)
 
-复盘待补
+#### 复盘
+
+我们引入`chrono`库进行记时，并且让核心的画线部分循环1000次。由于解析 OBJ 是文件 IO 操作，耗时且解析后的数据不会变，重复解析只会让计时结果失真，所以不放进循环。
+
+```c++
+int main(int argc, char** argv) {
+	
+
+    constexpr int width  = 800;
+    constexpr int height = 800;
+	const int LOOP_TIMES = 1000;
+    TGAImage framebuffer(width, height, TGAImage::RGB);
+
+	//这里后续可以改成从命令行参数传入模型路径
+    Model model("F:/VSproject/TinyRenderer/obj/diablo3_pose/diablo3_pose.obj");
+
+	int num_faces = model.nfaces();
+	int num_verts = model.nverts();
+	auto start_time = std::chrono::steady_clock::now();
+	for (int k = 0; k < LOOP_TIMES; k++) {
+		for (int i = 0; i < num_faces; i++) {
+			for (int j = 0; j < 3; j++) {
+				Vec3f v0 = model.vert(i, j);
+				Vec3f v1 = model.vert(i, (j + 1) % 3);
+				int screen_x0 = project(v0.x, width);
+				int screen_y0 = project(v0.y, height);
+				int screen_x1 = project(v1.x, width);
+				int screen_y1 = project(v1.y, height);
+				draw_line(screen_x0, screen_y0, screen_x1, screen_y1, framebuffer, red);
+			}
+		}
+	}
+    
+    framebuffer.write_tga_file("framebuffer.tga");
+
+	auto end_time = std::chrono::steady_clock::now();
+	auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count();
+	auto duration_s = std::chrono::duration_cast<std::chrono::seconds>(end_time - start_time).count();
+	std::cout << "程序运行完成！" << std::endl;
+	std::cout << "总运行时间：" << duration_ms << " 毫秒" << std::endl;
+	std::cout << "总运行时间：" << duration_s << " 秒" << std::endl;
+
+    return 0;
+}
+```
+
+结果：
+
+![第一次运行时长](images/chap1/第一次运行时长.png)
+
+其实很明显我们在main.cpp中有至少三个可以优化的点
+
+1、我的Bresenham算法实现并不是最标准的，它包含了两个性能瓶颈
+
+```c++
+float t = (x - x0) / static_cast<float>(x1 - x0); // 浮点除法！最慢的操作
+int y = std::round(y0 + (y1 - y0) * t);           // 浮点加法、乘法、取整
+```
+
+其实我们不需要算出具体的 y 是多少，我们只需要知道：**每当 x 移动一步，y 到底该不该动一步？**这通过一个误差变量 `error` 来累计 
+
+```c++
+void draw_line(int x0, int y0, int x1, int y1, TGAImage& framebuffer, TGAColor color) {
+	//画线段的Bresenham算法实现
+	bool steep = false;
+	steep = (std::abs(x0 - x1) < std::abs(y0 - y1));
+	if (steep) {
+		std::swap(x0, y0);
+		std::swap(x1, y1);
+	}
+	if(x0 > x1) {
+		std::swap(x0, x1);
+		std::swap(y0, y1);
+	}
+
+	int dx = x1 - x0;
+	int dy = std::abs(y1 - y0);
+	int error = 0;
+	int ystep = (y0 < y1) ? 1 : -1;
+	int y = y0;
+	
+	for (int x = x0; x <= x1; x++) {
+		if (steep) {
+			framebuffer.set(y, x, color);
+		} else {
+			framebuffer.set(x, y, color);
+		}
+        
+        // 原本的斜率是 dy/dx。如果不动用除法，我们就在 error 里累加 dy
+        // 当 error 攒够了一个 dx 时，说明 y 该走一步了
+
+		error += dy;
+        
+		// 这里实际上是把 error 扩大了 dx 倍来比较，避免除法
+        // error >= 0.5 (即 error * 2 >= dx)
+		if (error * 2 >= dx) {
+			y += ystep;
+			error -= dx;// 误差清零（减去一个单位）
+		}
+	}
+}
+```
+
+再次运行，可以看到，确实变快了一些
+
+![优化画线](images/chap1/优化画线.png)
+
+2、三角形重复边。一个封闭的 3D 模型，绝大多数边都是两个三角形共用的，所以需要一个“记账本”，记录哪条边已经画过了。如果遇到画过的，就跳过,本质上是那内存换时间，没有免费的午餐。
+
+tips: 在实时渲染中，**重复绘制** 确实是一个性能杀手。虽然在现在的 GPU 硬件管线中，线框模式通常直接由驱动处理，但在软渲染器中，每一行代码的效率都至关重要。
+
+
+

@@ -78,4 +78,7 @@ Vec3f Model::vert(const int iface, const int nthvert) const {
 	return verts[faces[iface][nthvert]];
 }
 
+int Model::vert_idx(const int iface, const int jvert) const{
+	return faces[iface][jvert];
+}
 

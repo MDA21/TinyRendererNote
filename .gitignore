@@ -1,0 +1,37 @@
+# --- 忽略编译产物 (C++ 垃圾) ---
+# Windows 编译垃圾
+*.exe
+*.ilk
+*.pdb
+*.sln
+*.vcxproj
+*.vcxproj.filters
+*.user
+*.suo
+
+# Mac/Linux 编译垃圾
+*.o
+*.out
+*.dylib
+
+# --- 忽略生成的图片 ---
+# 你肯定不想每次运行都把生成的 output.tga 传上去
+*.tga
+
+# --- 忽略 IDE 配置文件夹 ---
+.vscode/
+.idea/
+.vs/
+x64/
+Debug/
+Release/
+build/
+cmake-build-debug/
+TinyRenderer/
+obj/
+
+# --- ⚠️ 关键：处理 .obj ---
+# 这里的逻辑是：如果是 Windows 编译生成的 obj，通常在 Debug/ 或 x64/ 文件夹里，
+# 上面已经把那些文件夹忽略了，所以根目录下的 .obj (你的模型) 会被保留。
+# 但为了保险，如果你发现编译生成的 .obj 还是出现在了待提交列表里，
+# 你可以把模型放在专门的文件夹，或者手动剔除。

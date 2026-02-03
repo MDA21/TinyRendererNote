@@ -386,6 +386,8 @@ int main(int argc, char** argv) {
 
 其实很明显我们在main.cpp中有至少三个可以优化的点
 
+### 第二次尝试
+
 1、我的Bresenham算法实现并不是最标准的，它包含了两个性能瓶颈
 
 ```c++
@@ -441,9 +443,313 @@ void draw_line(int x0, int y0, int x1, int y1, TGAImage& framebuffer, TGAColor c
 
 ![优化画线](images/chap1/优化画线.png)
 
+### 第三次尝试
+
 2、三角形重复边。一个封闭的 3D 模型，绝大多数边都是两个三角形共用的，所以需要一个“记账本”，记录哪条边已经画过了。如果遇到画过的，就跳过,本质上是那内存换时间，没有免费的午餐。
 
 tips: 在实时渲染中，**重复绘制** 确实是一个性能杀手。虽然在现在的 GPU 硬件管线中，线框模式通常直接由驱动处理，但在软渲染器中，每一行代码的效率都至关重要。
 
+3、几何计算浪费。同一个顶点被好几个三角形共用，原来的算法会执行好几次投影（就是把它放大到屏幕那一步）。
 
+把这两个浪费放到一起是因为它们都属于重复劳动。那么我们现在来梳理一下思路：
+
+整个渲染过程被拆分成了三个清晰的阶段：
+
+#### 阶段 1：拓扑预处理 (Topology Pre-processing)
+*   **位置**：主循环外部（只执行 1 次）。
+*   **任务**：搞清楚“到底有多少条唯一的边”。
+*   **逻辑**：
+    1.  遍历所有面，把 `(u, v)` 和 `(v, u)` 统一格式化为 `(min, max)`。
+    2.  全部扔进一个 `vector`。
+    3.  **Sort（排序）**：把相同的边排在一起。
+    4.  **Unique（去重）**：剔除重复的边。
+
+```c++
+#include <cmath>
+#include <algorithm>
+//......
+
+struct Edge {
+	int u, v;
+	//重载 < 运算符，用于 sort
+	bool operator<(const Edge& other) const {
+		if (u != other.u) return u < other.u;
+		return v < other.v;
+	}
+	//重载 == 运算符，用于判断重复
+	bool operator==(const Edge& other) const {
+		return u == other.u && v == other.v;
+	}
+};
+
+void draw_line(int x0, int y0, int x1, int y1, TGAImage& framebuffer, TGAColor color) {
+    //......
+}
+
+//把投影到屏幕的部分单独拿出来的一个函数
+//worh: width or height
+int project(float pos, int worh) {
+	int screen_pos = static_cast<int>((pos + 1.0f) * worh / 2.0f);
+	return screen_pos;
+}
+
+int main(int argc, char** argv) {
+    //......
+    int num_faces = model.nfaces();
+	int num_verts = model.nverts();
+	std::vector<Edge> unique_edges;
+	unique_edges.reserve(num_faces * 3);
+	auto start_time = std::chrono::steady_clock::now();
+
+	for(int i = 0; i < num_faces; i++) {
+		for(int j = 0; j < 3; j++) {
+			int v0_idx = model.vert_idx(i, j % 3);
+			int v1_idx = model.vert_idx(i, (j + 1) % 3);
+			if(v0_idx > v1_idx) std::swap(v0_idx, v1_idx);
+			Edge edge = {v0_idx, v1_idx};
+			unique_edges.push_back(edge);
+		}
+	}
+    
+    std::sort(unique_edges.begin(), unique_edges.end());
+	auto last = std::unique(unique_edges.begin(), unique_edges.end());
+	unique_edges.erase(last, unique_edges.end());
+
+	std::cout << "Original edges: " << model.nfaces() * 3 << std::endl;
+    std::cout << "Unique edges:   " << unique_edges.size() << std::endl;
+    //......
+}
+
+
+```
+
+
+
+#### 阶段 2：顶点着色 (Vertex Processing)
+*   **位置**：渲染循环内部（每一帧执行）。
+*   **任务**：计算所有顶点在屏幕上的位置。
+*   **逻辑**：
+    1.  创建一个大小为 `num_verts` 的数组 `screen_coords`。
+    2.  遍历 `0` 到 `num_verts`。
+    3.  对每个点做 `project`，结果存入数组。
+*   **关键点**：这里用的是 `num_verts` 循环，**每个顶点只计算一次**，绝无浪费。 
+
+```c++
+std::vector<Vec2i> screen_coords(num_verts);
+
+
+for (int k = 0; k < LOOP_TIMES; k++) {
+	for (int i = 0; i < num_verts; i++) {
+		Vec3f v = model.vert(i);
+		screen_coords[i].x = project(v.x, width);
+		screen_coords[i].y = project(v.y, height);
+	}
+
+
+	for (const auto& edge : unique_edges) {
+
+		
+		Vec2i p0 = screen_coords[edge.u];
+		Vec2i p1 = screen_coords[edge.v];
+
+		//这里其实可以添加一个裁剪检查
+		//if (p0.x < 0 || p0.x >= width || p0.y < 0 ...) continue;
+
+		draw_line(p0.x, p0.y, p1.x, p1.y, framebuffer, red);
+	}
+}
+```
+
+
+
+#### 阶段 3：光栅化 (Rasterization / Drawing)
+*   **位置**：渲染循环内部（每一帧执行）。
+*   **任务**：连线。
+*   **逻辑**：
+    1.  遍历那份“去重后的边列表” (`unique_edges`)。
+    2.  根据索引 `u` 和 `v`，直接去 `screen_coords` 数组里查表拿坐标。
+    3.  调用 `draw_line`。
+*   **关键点**：只画必须画的线，没有重复劳动。
+
+假设我们有的diablo模型是一个标准的封闭 3D 模型。
+根据欧拉示性数和图形学统计规律，对于封闭三角网格：
+
+*   **顶点数 (V)**
+*   **面数 (F)** $\approx 2V$
+*   **边数 (E)** $\approx 3V$
+
+我们来看看优化前后的运算量对比：
+
+#### 1. 投影计算 (Projection Math)
+这是浮点运算，比较耗时。
+
+*   **优化前（按面遍历）**：
+    *   逻辑：`for i in faces: for j in 0..2: project(vert)`
+    *   次数：$3 \times F \approx 3 \times 2V = \mathbf{6V}$ 次
+*   **优化后（按点遍历）**：
+    *   逻辑：`for i in verts: project(vert)`
+    *   次数：$1 \times V = \mathbf{1V}$ 次
+*   **结论**：**投影计算量减少了 6 倍！**（因为平均每个顶点被 6 个三角形共用）。
+
+#### 2. 画线操作 (Draw Call)
+这是整数运算和内存写入，也非常耗时。
+
+*   **优化前（按面画线）**：
+    *   逻辑：每个三角形画 3 条边。
+    *   次数：$3 \times F \approx 6V$ 条线。
+    *   *注：因为每条边是两个面共用的，所以每条边被画了 2 次。*
+*   **优化后（按唯一边画线）**：
+    *   逻辑：只画 `unique_edges`。
+    *   次数：$1 \times E \approx \mathbf{3V}$ 条线。
+*   **结论**：**画线次数减少了 2 倍！**
+
+#### 最后速度
+
+![优化其他](images/chap1/优化其他.png)我的电脑的cpu是i7-12650，不同电脑运行速度不同，但明显比前面的快得多。
+
+最后别忘了删掉测试用的循环
+
+### 最终的main.cpp
+
+```c++
+#include <string>
+#include <iostream>
+#include <vector>
+#include <fstream>
+#include <chrono>
+#include <sstream>
+#include <cmath>
+#include <algorithm>
+#include "../include/model.h"
+#include "../include/tgaimage.h"
+
+constexpr TGAColor white   = {255, 255, 255, 255}; // attention, BGRA order
+constexpr TGAColor green   = {  0, 255,   0, 255};
+constexpr TGAColor red     = {  0,   0, 255, 255};
+constexpr TGAColor blue    = {255, 128,  64, 255};
+constexpr TGAColor yellow  = {  0, 200, 255, 255};
+
+struct Edge {
+	int u, v;
+	//重载 < 运算符，用于 sort
+	bool operator<(const Edge& other) const {
+		if (u != other.u) return u < other.u;
+		return v < other.v;
+	}
+	//重载 == 运算符，用于判断重复
+	bool operator==(const Edge& other) const {
+		return u == other.u && v == other.v;
+	}
+};
+
+void draw_line(int x0, int y0, int x1, int y1, TGAImage& framebuffer, TGAColor color) {
+	//画线段的Bresenham算法实现
+	bool steep = false;
+	steep = (std::abs(x0 - x1) < std::abs(y0 - y1));
+	if (steep) {
+		std::swap(x0, y0);
+		std::swap(x1, y1);
+	}
+	if(x0 > x1) {
+		std::swap(x0, x1);
+		std::swap(y0, y1);
+	}
+
+	int dx = x1 - x0;
+	int dy = std::abs(y1 - y0);
+	int error = 0;
+	int ystep = (y0 < y1) ? 1 : -1;
+	int y = y0;
+
+	for (int x = x0; x <= x1; x++) {
+		if (steep) {
+			framebuffer.set(y, x, color);
+		} else {
+			framebuffer.set(x, y, color);
+		}
+
+		error += dy;
+
+		if (error * 2 >= dx) {
+			y += ystep;
+			error -= dx;
+		}
+	}
+}
+
+//worh: width or height
+int project(float pos, int worh) {
+	int screen_pos = static_cast<int>((pos + 1.0f) * worh / 2.0f);
+	return screen_pos;
+}
+int main(int argc, char** argv) {
+	
+
+    constexpr int width  = 800;
+    constexpr int height = 800;
+    TGAImage framebuffer(width, height, TGAImage::RGB);
+
+	//这里后续可以改成从命令行参数传入模型路径
+    Model model("F:/VSproject/TinyRenderer/obj/diablo3_pose/diablo3_pose.obj");
+
+	int num_faces = model.nfaces();
+	int num_verts = model.nverts();
+	std::vector<Edge> unique_edges;
+	unique_edges.reserve(num_faces * 3);
+	auto start_time = std::chrono::steady_clock::now();
+
+	for(int i = 0; i < num_faces; i++) {
+		for(int j = 0; j < 3; j++) {
+			int v0_idx = model.vert_idx(i, j % 3);
+			int v1_idx = model.vert_idx(i, (j + 1) % 3);
+			if(v0_idx > v1_idx) std::swap(v0_idx, v1_idx);
+			Edge edge = {v0_idx, v1_idx};
+			unique_edges.push_back(edge);
+		}
+	}
+
+	std::sort(unique_edges.begin(), unique_edges.end());
+	auto last = std::unique(unique_edges.begin(), unique_edges.end());
+	unique_edges.erase(last, unique_edges.end());
+
+	std::cout << "Original edges: " << model.nfaces() * 3 << std::endl;
+	std::cout << "Unique edges:   " << unique_edges.size() << std::endl;
+
+	std::vector<Vec2i> screen_coords(num_verts);
+	
+
+
+	for (int i = 0; i < num_verts; i++) {
+		Vec3f v = model.vert(i);
+		screen_coords[i].x = project(v.x, width);
+		screen_coords[i].y = project(v.y, height);
+	}
+
+
+	for (const auto& edge : unique_edges) {
+
+			
+		Vec2i p0 = screen_coords[edge.u];
+		Vec2i p1 = screen_coords[edge.v];
+
+		// 简单的裁剪检查（可选，防止画出界崩溃）
+		// if (p0.x < 0 || p0.x >= width || p0.y < 0 ...) continue;
+
+		draw_line(p0.x, p0.y, p1.x, p1.y, framebuffer, red);
+	}
+	
+    
+    framebuffer.write_tga_file("framebuffer.tga");
+
+	auto end_time = std::chrono::steady_clock::now();
+	auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count();
+	auto duration_s = std::chrono::duration_cast<std::chrono::seconds>(end_time - start_time).count();
+	std::cout << "程序运行完成！" << std::endl;
+	std::cout << "总运行时间：" << duration_ms << " 毫秒" << std::endl;
+	std::cout << "总运行时间：" << duration_s << " 秒" << std::endl;
+
+    return 0;
+}
+
+```
 

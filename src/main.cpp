@@ -4,7 +4,8 @@
 #include <fstream>
 #include <chrono>
 #include <sstream>
-#include <set>
+#include <cmath>
+#include <algorithm>
 #include "../include/model.h"
 #include "../include/tgaimage.h"
 
@@ -13,6 +14,19 @@ constexpr TGAColor green   = {  0, 255,   0, 255};
 constexpr TGAColor red     = {  0,   0, 255, 255};
 constexpr TGAColor blue    = {255, 128,  64, 255};
 constexpr TGAColor yellow  = {  0, 200, 255, 255};
+
+struct Edge {
+	int u, v;
+	//重载 < 运算符，用于 sort
+	bool operator<(const Edge& other) const {
+		if (u != other.u) return u < other.u;
+		return v < other.v;
+	}
+	//重载 == 运算符，用于判断重复
+	bool operator==(const Edge& other) const {
+		return u == other.u && v == other.v;
+	}
+};
 
 void draw_line(int x0, int y0, int x1, int y1, TGAImage& framebuffer, TGAColor color) {
 	//画线段的Bresenham算法实现
@@ -49,6 +63,7 @@ void draw_line(int x0, int y0, int x1, int y1, TGAImage& framebuffer, TGAColor c
 	}
 }
 
+//worh: width or height
 int project(float pos, int worh) {
 	int screen_pos = static_cast<int>((pos + 1.0f) * worh / 2.0f);
 	return screen_pos;
@@ -58,7 +73,6 @@ int main(int argc, char** argv) {
 
     constexpr int width  = 800;
     constexpr int height = 800;
-	const int LOOP_TIMES = 1000;
     TGAImage framebuffer(width, height, TGAImage::RGB);
 
 	//这里后续可以改成从命令行参数传入模型路径
@@ -66,31 +80,50 @@ int main(int argc, char** argv) {
 
 	int num_faces = model.nfaces();
 	int num_verts = model.nverts();
-	std::set<std::pair<int, int>> edges;
+	std::vector<Edge> unique_edges;
+	unique_edges.reserve(num_faces * 3);
 	auto start_time = std::chrono::steady_clock::now();
 
-	for (int k = 0; k < LOOP_TIMES; k++) {
-		for (int i = 0; i < num_faces; i++) {
-			for (int j = 0; j < 3; j++) {
-				int v0_idx = model.vert_idx(i, j % 3);
-				int v1_idx = model.vert_idx(i, (j + 1) % 3);
-				if (v0_idx > v1_idx) std::swap(v0_idx, v1_idx);
-				std::pair<int, int> edge = { v0_idx, v1_idx };
-
-				if (edges.find(edge) == edges.end()) {
-
-					edges.insert(edge);
-					Vec3f v0 = model.vert(v0_idx);
-					Vec3f v1 = model.vert(v1_idx);
-					int screen_x0 = project(v0.x, width);
-					int screen_y0 = project(v0.y, height);
-					int screen_x1 = project(v1.x, width);
-					int screen_y1 = project(v1.y, height);
-					draw_line(screen_x0, screen_y0, screen_x1, screen_y1, framebuffer, red);
-				}
-			}
+	for(int i = 0; i < num_faces; i++) {
+		for(int j = 0; j < 3; j++) {
+			int v0_idx = model.vert_idx(i, j % 3);
+			int v1_idx = model.vert_idx(i, (j + 1) % 3);
+			if(v0_idx > v1_idx) std::swap(v0_idx, v1_idx);
+			Edge edge = {v0_idx, v1_idx};
+			unique_edges.push_back(edge);
 		}
 	}
+
+	std::sort(unique_edges.begin(), unique_edges.end());
+	auto last = std::unique(unique_edges.begin(), unique_edges.end());
+	unique_edges.erase(last, unique_edges.end());
+
+	std::cout << "Original edges: " << model.nfaces() * 3 << std::endl;
+	std::cout << "Unique edges:   " << unique_edges.size() << std::endl;
+
+	std::vector<Vec2i> screen_coords(num_verts);
+	
+
+
+		for (int i = 0; i < num_verts; i++) {
+			Vec3f v = model.vert(i);
+			screen_coords[i].x = project(v.x, width);
+			screen_coords[i].y = project(v.y, height);
+		}
+
+
+		for (const auto& edge : unique_edges) {
+
+			
+			Vec2i p0 = screen_coords[edge.u];
+			Vec2i p1 = screen_coords[edge.v];
+
+			// 简单的裁剪检查（可选，防止画出界崩溃）
+			// if (p0.x < 0 || p0.x >= width || p0.y < 0 ...) continue;
+
+			draw_line(p0.x, p0.y, p1.x, p1.y, framebuffer, red);
+		}
+	
     
     framebuffer.write_tga_file("framebuffer.tga");
 

@@ -159,7 +159,7 @@ void triangle(int ax, int ay, int bx, int by, int cx, int cy, TGAImage& framebuf
 
 		use_obb_culling = true;
 	}
-
+#pragma omp parallel for
 	for(int x = bboxmax_x; x >= bboxmin_x; x--) {
 		for(int y = bboxmax_y; y >= bboxmin_y; y--) {
 

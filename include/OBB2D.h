@@ -1,23 +1,27 @@
 ﻿#pragma once
+
 #include <vector>
-#include "vector.h"
+#include "../include/vector.h"
+#include <algorithm>
 
-struct OBB2D
-{
-    Vec2f center;
-    Vec2f axis0;     // 主轴（单位）
-    Vec2f axis1;     // 副轴（单位）
-    Vec2f halfSize;  // 半尺寸
+struct OBB2D {
+    Vec2f center;          // OBB包围盒中心坐标
+	Vec2f axes[2];         // OBB的两个正交轴
+    float halfExtents[2];  // 半长/半宽
 
-    // === 构建 ===
-    static OBB2D from_triangle(const Vec2i& a,
-        const Vec2i& b,
-        const Vec2i& c);
+    OBB2D();
 
-    // === OBB → AABB（用于扫描）===
-    void get_bounds(int& min_x, int& max_x,
-        int& min_y, int& max_y) const;
+	OBB2D(const Vec2f& center, float width, float height, float rotationRad);
 
-    // === 点是否在 OBB 内 ===
-    bool contains_point(const Vec2i& p) const;
+	OBB2D(const std::vector<Vec2f>& points);
+
+	std::vector<Vec2f> getCorners() const;
+
+	bool containsPoint(const Vec2f& point) const;
+
+	bool Intersects(const OBB2D& other) const;
+
+	void MoveTo(const Vec2f& newCenter);
+
+	void Rotate(float angleRad);
 };

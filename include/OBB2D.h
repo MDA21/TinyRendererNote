@@ -1,108 +1,111 @@
-#include "vector.h"
+ï»¿#include "vector.h"
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 struct OBB2D {
-    Vec2i center;          // OBBÖĞĞÄ£¨Èı½ÇĞÎ¼¸ºÎÖĞĞÄ£©
-    Vec2i axes[2];         // 2¸öÕı½»ÖáÏò£¨¶ÔÆëÈı½ÇĞÎÖ÷Öá£©
-    int half_extents[2];   // Ã¿¸öÖáÏòµÄ°ë³¤¶È£¨ÏñËØ£©
+    Vec2f center;    // æ”¹ç”¨æµ®ç‚¹ç±»å‹ä¿å­˜ä¸­å¿ƒç‚¹ï¼ˆæ ¸å¿ƒä¿®æ­£ï¼‰
+    Vec2f axis[2];   // æ”¹ç”¨æµ®ç‚¹ç±»å‹ä¿å­˜OBBçš„è½´ï¼ˆå•ä½å‘é‡ï¼Œæ ¸å¿ƒä¿®æ­£ï¼‰
+    float extent[2]; // æ”¹ç”¨æµ®ç‚¹ç±»å‹ä¿å­˜è½´æ–¹å‘çš„åŠé•¿ï¼ˆæ ¸å¿ƒä¿®æ­£ï¼‰
 
-    // Ä¬ÈÏ¹¹Ôì
-    OBB2D() : center(Vec2i(0, 0)) {
-        axes[0] = Vec2i(1, 0);
-        axes[1] = Vec2i(0, 1);
-        half_extents[0] = 0;
-        half_extents[1] = 0;
-    }
-
-    // ´ÓÈı½ÇĞÎ3¸ö¶¥µã¹¹ÔìOBB£¨ºËĞÄ£º¶ÔÆëÈı½ÇĞÎÖ÷Öá£©
+    // ä»ä¸‰è§’å½¢æ„é€ OBBï¼ˆæ ¸å¿ƒä¿®æ­£ï¼‰
     static OBB2D from_triangle(const Vec2i& v0, const Vec2i& v1, const Vec2i& v2) {
         OBB2D obb;
+        std::vector<Vec2f> pts = { v0.to_float(), v1.to_float(), v2.to_float() };
 
-        // 1. ¼ÆËãÈı½ÇĞÎ¼¸ºÎÖĞĞÄ£¨OBBÖĞĞÄ£©
-        obb.center = (v0 + v1 + v2) / 3;
+        // æ­¥éª¤1ï¼šè®¡ç®—ä¸‰è§’å½¢çš„è´¨å¿ƒï¼ˆæµ®ç‚¹ç²¾åº¦ï¼‰
+        obb.center = (pts[0] + pts[1] + pts[2]) * (1.0f / 3.0f);
 
-        // 2. ¼ÆËãÈıÌõ±ßÏòÁ¿£¬ÕÒ×î³¤±ß£¨Ö÷Öá·½Ïò£©
-        Vec2i e0 = v1 - v0;
-        Vec2i e1 = v2 - v1;
-        Vec2i e2 = v0 - v2;
+        // æ­¥éª¤2ï¼šè®¡ç®—åæ–¹å·®çŸ©é˜µ [a, b; b, c]
+        float a = 0.0f, b = 0.0f, c = 0.0f;
+        for (const auto& p : pts) {
+            Vec2f delta = p - obb.center;
+            a += delta.x * delta.x;
+            b += delta.x * delta.y;
+            c += delta.y * delta.y;
+        }
+        a /= 3.0f;
+        b /= 3.0f;
+        c /= 3.0f;
 
-        float len0 = e0.length_sq();
-        float len1 = e1.length_sq();
-        float len2 = e2.length_sq();
+        // æ­¥éª¤3ï¼šæ±‚è§£åæ–¹å·®çŸ©é˜µçš„ç‰¹å¾å€¼å’Œç‰¹å¾å‘é‡ï¼ˆOBBçš„ä¸»è½´ï¼‰
+        // ç‰¹å¾æ–¹ç¨‹ï¼šÎ»Â² - (a+c)Î» + (ac - bÂ²) = 0
+        float trace = a + c;
+        float det = a * c - b * b;
+        float sqrt_det = sqrt(std::max(0.0f, det));
 
-        Vec2i main_axis = len0 > len1 ? (len0 > len2 ? e0 : e2) : (len1 > len2 ? e1 : e2);
+        // ä¸¤ä¸ªç‰¹å¾å€¼å¯¹åº”çš„ç‰¹å¾å‘é‡ï¼ˆä¸»è½´æ–¹å‘ï¼‰
+        // ç‰¹å¾å‘é‡æ–¹å‘ç”± (b, Î» - a) ç¡®å®š
+        float lambda1 = (trace + sqrt_det) / 2.0f;
+        float lambda2 = (trace - sqrt_det) / 2.0f;
 
-        // 3. Ö÷Öá¹éÒ»»¯£¨×ªµ¥Î»ÏòÁ¿£¬±ÜÃâ³¤¶È¸ÉÈÅ£©
-        float main_len = main_axis.length();
-        if (main_len < 1e-8) { // ±ÜÃâ³ıÁã£¨¶¥µãÖØºÏ£©
-            obb.axes[0] = Vec2i(1, 0);
-            obb.axes[1] = Vec2i(0, 1);
+        // ä¸»è½´1ï¼ˆå¯¹åº”æœ€å¤§ç‰¹å¾å€¼ï¼Œä¿è¯è½´çš„æ­£äº¤æ€§ï¼‰
+        Vec2f axis0, axis1;
+        if (fabs(b) < 1e-8) { // åæ–¹å·®çŸ©é˜µå¯¹è§’åŒ–ï¼Œè½´æ²¿x/y
+            axis0 = Vec2f(1.0f, 0.0f);
+            axis1 = Vec2f(0.0f, 1.0f);
         }
         else {
-            // ¹éÒ»»¯Ö÷Öá
-            obb.axes[0] = Vec2i(
-                static_cast<int>(main_axis.x / main_len),
-                static_cast<int>(main_axis.y / main_len)
-            );
-            // ´¹Ö±ÖáÏò£¨2DÖĞ(x,y)µÄ´¹Ö±ÏòÁ¿ÊÇ(-y,x)£©
-            obb.axes[1] = Vec2i(-obb.axes[0].y, obb.axes[0].x);
+            axis0 = Vec2f(b, lambda1 - a).normalize();
+            axis1 = Vec2f(-axis0.y, axis0.x); // æ­£äº¤è½´ï¼ˆé€†æ—¶é’ˆæ—‹è½¬90åº¦ï¼‰
         }
 
-        // 4. Í¶Ó°¶¥µãµ½Á½¸öÖáÏò£¬¼ÆËã°ë³¤
-        float min_p = 1e9, max_p = -1e9; // Ö÷ÖáÍ¶Ó°¼«Öµ
-        float min_q = 1e9, max_q = -1e9; // ´¹Ö±ÖáÍ¶Ó°¼«Öµ
+        // ç¡®ä¿è½´æ˜¯å•ä½å‘é‡ï¼ˆæ ¸å¿ƒï¼šä¿ç•™æ—‹è½¬æ–¹å‘ï¼‰
+        obb.axis[0] = axis0.normalize();
+        obb.axis[1] = axis1.normalize();
 
-        auto project = [&](const Vec2i& p) {
-            Vec2i dir = p - obb.center;
-            float p_proj = dir.dot(obb.axes[0]); // Ö÷ÖáÍ¶Ó°
-            float q_proj = dir.dot(obb.axes[1]); // ´¹Ö±ÖáÍ¶Ó°
-
-            min_p = std::min(min_p, p_proj);
-            max_p = std::max(max_p, p_proj);
-            min_q = std::min(min_q, q_proj);
-            max_q = std::max(max_q, q_proj);
-            };
-
-        project(v0);
-        project(v1);
-        project(v2);
-
-        // 5. ÉèÖÃ°ë³¤£¨È¡ÕûÊÊÅäÏñËØ£©
-        obb.half_extents[0] = static_cast<int>((max_p - min_p) / 2 + 0.5f);
-        obb.half_extents[1] = static_cast<int>((max_q - min_q) / 2 + 0.5f);
-
-        // ·À»¤£º°ë³¤²»ÄÜÎª¸º
-        obb.half_extents[0] = std::max(obb.half_extents[0], 1);
-        obb.half_extents[1] = std::max(obb.half_extents[1], 1);
+        // æ­¥éª¤4ï¼šè®¡ç®—ä¸‰è§’å½¢é¡¶ç‚¹åœ¨ä¸¤ä¸ªè½´ä¸Šçš„æŠ•å½±èŒƒå›´ï¼Œå¾—åˆ°extentï¼ˆåŠé•¿ï¼‰
+        for (int i = 0; i < 2; i++) {
+            float min_proj = std::numeric_limits<float>::max();
+            float max_proj = std::numeric_limits<float>::lowest();
+            for (const auto& p : pts) {
+                Vec2f delta = p - obb.center;
+                float proj = delta.dot(obb.axis[i]); // æµ®ç‚¹æŠ•å½±ï¼ˆæ— ç²¾åº¦ä¸¢å¤±ï¼‰
+                min_proj = std::min(min_proj, proj);
+                max_proj = std::max(max_proj, proj);
+            }
+            obb.extent[i] = (max_proj - min_proj) / 2.0f; // åŠé•¿ï¼ˆæµ®ç‚¹ï¼‰
+        }
 
         return obb;
     }
 
-    // ÅĞ¶ÏµãÊÇ·ñÔÚOBBÄÚ£¨¿ìËÙÌŞ³ıÎŞĞ§ÏñËØ£©
+    // åˆ¤æ–­ç‚¹æ˜¯å¦åœ¨OBBå†…ï¼ˆé€‚é…æµ®ç‚¹ç±»å‹ï¼‰
     bool contains_point(const Vec2i& p) const {
-        Vec2i dir = p - center;
-        // Í¶Ó°µ½Á½¸öÖáÏò£¬ÅĞ¶ÏÊÇ·ñÔÚ°ë³¤·¶Î§ÄÚ
-        int proj_p = dir.dot(axes[0]);
-        int proj_q = dir.dot(axes[1]);
+        Vec2f p_float = p.to_float();
+        Vec2f delta = p_float - center;
 
-        return std::abs(proj_p) <= half_extents[0] && std::abs(proj_q) <= half_extents[1];
+        // æŠ•å½±åˆ°ä¸¤ä¸ªè½´ä¸Šï¼Œåˆ¤æ–­æ˜¯å¦åœ¨extentèŒƒå›´å†…
+        for (int i = 0; i < 2; i++) {
+            float proj = delta.dot(axis[i]);
+            if (fabs(proj) > extent[i] + 1e-8) { // åŠ å°epsiloné¿å…æµ®ç‚¹è¯¯å·®
+                return false;
+            }
+        }
+        return true;
     }
 
-    // »ñÈ¡OBBµÄÏñËØ±éÀú·¶Î§£¨×îĞ¡/×î´óx/y£©
+    // è·å–OBBçš„AABBè¾¹ç•Œï¼ˆç”¨äºéå†åƒç´ ï¼Œé€‚é…æµ®ç‚¹è½¬æ•´å‹ï¼‰
     void get_bounds(int& min_x, int& max_x, int& min_y, int& max_y) const {
-        // ¼ÆËãOBBËÄ¸ö¶¥µã
-        Vec2i corner[4] = {
-            center + axes[0] * half_extents[0] + axes[1] * half_extents[1],
-            center + axes[0] * half_extents[0] - axes[1] * half_extents[1],
-            center - axes[0] * half_extents[0] + axes[1] * half_extents[1],
-            center - axes[0] * half_extents[0] - axes[1] * half_extents[1]
+        // è®¡ç®—OBBçš„å››ä¸ªè§’ç‚¹ï¼ˆæµ®ç‚¹ï¼‰
+        std::vector<Vec2f> corners = {
+            center + axis[0] * extent[0] + axis[1] * extent[1],
+            center + axis[0] * extent[0] - axis[1] * extent[1],
+            center - axis[0] * extent[0] + axis[1] * extent[1],
+            center - axis[0] * extent[0] - axis[1] * extent[1]
         };
 
-        // ÕÒËÄ¸ö¶¥µãµÄ¼«Öµ£¨±éÀú·¶Î§£©
-        min_x = std::min({ corner[0].x, corner[1].x, corner[2].x, corner[3].x });
-        max_x = std::max({ corner[0].x, corner[1].x, corner[2].x, corner[3].x });
-        min_y = std::min({ corner[0].y, corner[1].y, corner[2].y, corner[3].y });
-        max_y = std::max({ corner[0].y, corner[1].y, corner[2].y, corner[3].y });
+        // éå†è§’ç‚¹æ±‚AABBè¾¹ç•Œï¼ˆè½¬æ•´å‹æ—¶å–æ•´ï¼‰
+        min_x = static_cast<int>(floor(corners[0].x));
+        max_x = static_cast<int>(ceil(corners[0].x));
+        min_y = static_cast<int>(floor(corners[0].y));
+        max_y = static_cast<int>(ceil(corners[0].y));
+
+        for (const auto& c : corners) {
+            min_x = std::min(min_x, static_cast<int>(floor(c.x)));
+            max_x = std::max(max_x, static_cast<int>(ceil(c.x)));
+            min_y = std::min(min_y, static_cast<int>(floor(c.y)));
+            max_y = std::max(max_y, static_cast<int>(ceil(c.y)));
+        }
     }
 };

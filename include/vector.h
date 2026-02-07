@@ -1,10 +1,47 @@
 #pragma once
 #include <cmath>
 
+struct Vec2f {
+    float x, y;
+    Vec2f(float x_ = 0, float y_ = 0) : x(x_), y(y_) {}
+
+    // 向量点乘
+    float dot(const Vec2f& other) const {
+        return x * other.x + y * other.y;
+    }
+
+    // 向量叉乘（2D下返回标量，等于z轴分量）
+    float cross(const Vec2f& other) const {
+        return x * other.y - y * other.x;
+    }
+
+    // 向量归一化
+    Vec2f normalize() const {
+        float len = std::sqrt(x * x + y * y);
+        return len < 1e-8 ? Vec2f(0, 0) : Vec2f(x / len, y / len);
+    }
+
+    // 向量减法
+    Vec2f operator-(const Vec2f& other) const {
+        return Vec2f(x - other.x, y - other.y);
+    }
+
+    Vec2f operator+(const Vec2f& other) const {
+        return Vec2f(x + other.x, y + other.y);
+    }
+
+    // 向量数乘
+    Vec2f operator*(float s) const {
+        return Vec2f(x * s, y * s);
+    }
+};
+
 struct Vec2i
 {
-	int x, y;
-	Vec2i(int x = 0, int y = 0) : x(x), y(y) {}
+    int x, y;
+    Vec2i(int x = 0, int y = 0) : x(x), y(y) {}
+    Vec2f to_float() const { return Vec2f((float)x, (float)y); }
+
 
     Vec2i operator+(const Vec2i& other) const {
         return Vec2i(x + other.x, y + other.y);

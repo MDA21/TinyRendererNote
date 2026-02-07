@@ -123,20 +123,36 @@ double signed_triangle_area(int ax, int ay, int bx, int by, int cx, int cy) {
 	return .5 * ((by - ay) * (bx + ax) + (cy - by) * (cx + bx) + (ay - cy) * (ax + cx));
 }
 
+void draw_rect(int min_x, int min_y, int max_x, int max_y, TGAImage& framebuffer, TGAColor color) {
+	draw_line(min_x, min_y, max_x, min_y, framebuffer, color); // 上
+	draw_line(max_x, min_y, max_x, max_y, framebuffer, color); // 右
+	draw_line(max_x, max_y, min_x, max_y, framebuffer, color); // 下
+	draw_line(min_x, max_y, min_x, min_y, framebuffer, color); // 左
+}
+
 void triangle(int ax, int ay, int bx, int by, int cx, int cy, TGAImage& framebuffer, TGAColor color) {
-	// 1. 构造三角形的OBB（对齐主轴，紧凑包围）
 	Vec2i v0(ax, ay), v1(bx, by), v2(cx, cy);
 	OBB2D tri_obb = OBB2D::from_triangle(v0, v1, v2);
 
-	// 2. 获取OBB的像素遍历范围（比AABB小）
 	int obb_min_x, obb_max_x, obb_min_y, obb_max_y;
 	tri_obb.get_bounds(obb_min_x, obb_max_x, obb_min_y, obb_max_y);
 
-	// 3. 计算三角形总面积（重心坐标判断用）
+	//// 关键：打印OBB边界值，验证是否计算正确
+	//std::cout << "=== 三角形顶点 ===" << std::endl;
+	//std::cout << "(" << ax << "," << ay << "), (" << bx << "," << by << "), (" << cx << "," << cy << ")" << std::endl;
+	//std::cout << "=== OBB边界 ===" << std::endl;
+	//std::cout << "min_x: " << obb_min_x << ", max_x: " << obb_max_x << std::endl;
+	//std::cout << "min_y: " << obb_min_y << ", max_y: " << obb_max_y << std::endl;
+
+	//draw_rect(obb_min_x, obb_min_y, obb_max_x, obb_max_y, framebuffer, blue);
+
+	//draw_line(ax, ay, bx, by, framebuffer, yellow);
+	//draw_line(bx, by, cx, cy, framebuffer, yellow);
+	//draw_line(cx, cy, ax, ay, framebuffer, yellow);
+
 	float total_area = signed_triangle_area(ax, ay, bx, by, cx, cy);
 	if (std::abs(total_area) < 1e-8) return;
 
-	// 4. 遍历OBB范围内的像素（比AABB少）
 	for (int x = obb_min_x; x <= obb_max_x; x++) {
 		for (int y = obb_min_y; y <= obb_max_y; y++) {
 			// 快速剔除OBB外的像素（第一层过滤）
@@ -178,6 +194,9 @@ int main(int argc, char** argv) {
 	//loadModelOutline(model, framebuffer, height, width);
 	auto start_time = std::chrono::steady_clock::now();
 
+	/*triangle(7, 45, 35, 100, 45, 60, framebuffer, red);
+	triangle(120, 35, 90, 5, 45, 110, framebuffer, white);
+	triangle(115, 83, 80, 90, 85, 120, framebuffer, green);*/
 	for (int i = 0; i < LOOP_TIMES; i++) {
 
 		for (int i = 0; i < model.nfaces(); i++) {

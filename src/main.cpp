@@ -124,54 +124,15 @@ double signed_triangle_area(int ax, int ay, int bx, int by, int cx, int cy) {
 }
 
 void triangle(int ax, int ay, int bx, int by, int cx, int cy, TGAImage& framebuffer, TGAColor color) {
-	
 	int bboxmin_x = std::min({ ax, bx, cx });
 	int bboxmax_x = std::max({ ax, bx, cx });
 	int bboxmin_y = std::min({ ay, by, cy });
 	int bboxmax_y = std::max({ ay, by, cy });
 	double total_area = signed_triangle_area(ax, ay, bx, by, cx, cy);
 	if (total_area < 1)return;
-
-
-	// 策略：只有当 AABB 的面积远大于三角形面积时，才值得花算力去构建 OBB
-	// 否则，构建 OBB 的开销比直接算重心坐标还要大
-	double aabb_area = (bboxmax_x - bboxmin_x) * (bboxmax_y - bboxmin_y);
-
-	bool use_obb_culling = false;
-
-	OBB2D triOBB;
-
-	//如果 AABB 面积是三角形的 3 倍以上，说明三角形很细长/倾斜，启用 OBB 剔除
-	if ((aabb_area / total_area) > 3.0) {
-		std::vector<Vec2f> pts;
-		pts.reserve(3);
-		pts.emplace_back((float)ax, (float)ay);
-		pts.emplace_back((float)bx, (float)by);
-		pts.emplace_back((float)cx, (float)cy);
-
-		// 构建 OBB
-		triOBB = OBB2D(pts);
-
-		// 【关键】为了防止浮点误差导致边缘像素丢失，稍微扩大一点 OBB
-		// 这是一个工程技巧，给半长增加 0.5 - 1.0 的容差
-		triOBB.halfExtents[0] += 0.5f;
-		triOBB.halfExtents[1] += 0.5f;
-
-		use_obb_culling = true;
-	}
 #pragma omp parallel for
 	for(int x = bboxmax_x; x >= bboxmin_x; x--) {
 		for(int y = bboxmax_y; y >= bboxmin_y; y--) {
-
-			if (use_obb_culling) {
-				// 使用像素中心点 (x + 0.5, y + 0.5) 进行测试精度更高
-				Vec2f pixelCenter((float)x + 0.5f, (float)y + 0.5f);
-
-				if (!triOBB.containsPoint(pixelCenter)) {
-					continue;
-				}
-			}
-
 			double alpha = signed_triangle_area(x, y, bx, by, cx, cy) / total_area;
 			if (alpha < 0)continue;
 

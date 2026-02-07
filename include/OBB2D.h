@@ -1,136 +1,108 @@
-#pragma once
 #include "vector.h"
 #include <algorithm>
 #include <cmath>
-#include <vector>
 
 struct OBB2D {
-    Vec2i center;          // OBB 中心（整数坐标，适配屏幕像素）
-    Vec2i axes[2];         // 2 个正交单位轴向（自定义朝向，Vec2i 归一化后存储）
-    int half_extents[2];   // 每个轴向的半长度（中心到边的距离，整数适配像素）
+    Vec2i center;          // OBB中心（三角形几何中心）
+    Vec2i axes[2];         // 2个正交轴向（对齐三角形主轴）
+    int half_extents[2];   // 每个轴向的半长度（像素）
 
-    // 默认构造：轴向为屏幕坐标系 X/Y 轴
+    // 默认构造
     OBB2D() : center(Vec2i(0, 0)) {
-        axes[0] = Vec2i(1, 0);  // X 轴
-        axes[1] = Vec2i(0, 1);  // Y 轴
+        axes[0] = Vec2i(1, 0);
+        axes[1] = Vec2i(0, 1);
         half_extents[0] = 0;
         half_extents[1] = 0;
     }
 
-    // 自定义构造：中心 + 轴向 + 半长
-    // 注意：轴向会自动归一化为单位向量（浮点数计算后转整数，适配像素精度）
-    OBB2D(const Vec2i& center_, const Vec2i axes_[2], const int half_extents_[2])
-        : center(center_) {
-        // 归一化轴向（浮点数计算，避免整数精度丢失）
-        for (int i = 0; i < 2; i++) {
-            float len = axes_[i].length();
-            if (len < 1e-8) {
-                axes[i] = (i == 0) ? Vec2i(1, 0) : Vec2i(0, 1); // 兜底默认轴向
-            }
-            else {
-                axes[i].x = static_cast<int>(axes_[i].x / len);
-                axes[i].y = static_cast<int>(axes_[i].y / len);
-            }
-            half_extents[i] = half_extents_[i];
-        }
-        // 确保轴向正交（修正浮点误差）
-        if (std::abs(axes[0].dot(axes[1])) > 1e-4) {
-            axes[1] = Vec2i(-axes[0].y, axes[0].x); // 垂直化
-        }
-    }
-
-    // 从 2D 顶点集构造 OBB（简化版：基于 AABB 转换，适配屏幕像素）
-    static OBB2D from_vertices(const Vec2i* vertices, int count) {
+    // 从三角形3个顶点构造OBB（核心：对齐三角形主轴）
+    static OBB2D from_triangle(const Vec2i& v0, const Vec2i& v1, const Vec2i& v2) {
         OBB2D obb;
-        if (count == 0) return obb;
 
-        // 第一步：计算 AABB 包围盒（像素级最小/最大坐标）
-        int min_x = vertices[0].x, max_x = vertices[0].x;
-        int min_y = vertices[0].y, max_y = vertices[0].y;
+        // 1. 计算三角形几何中心（OBB中心）
+        obb.center = (v0 + v1 + v2) / 3;
 
-        for (int i = 1; i < count; i++) {
-            min_x = std::min(min_x, vertices[i].x);
-            max_x = std::max(max_x, vertices[i].x);
-            min_y = std::min(min_y, vertices[i].y);
-            max_y = std::max(max_y, vertices[i].y);
+        // 2. 计算三条边向量，找最长边（主轴方向）
+        Vec2i e0 = v1 - v0;
+        Vec2i e1 = v2 - v1;
+        Vec2i e2 = v0 - v2;
+
+        float len0 = e0.length_sq();
+        float len1 = e1.length_sq();
+        float len2 = e2.length_sq();
+
+        Vec2i main_axis = len0 > len1 ? (len0 > len2 ? e0 : e2) : (len1 > len2 ? e1 : e2);
+
+        // 3. 主轴归一化（转单位向量，避免长度干扰）
+        float main_len = main_axis.length();
+        if (main_len < 1e-8) { // 避免除零（顶点重合）
+            obb.axes[0] = Vec2i(1, 0);
+            obb.axes[1] = Vec2i(0, 1);
+        }
+        else {
+            // 归一化主轴
+            obb.axes[0] = Vec2i(
+                static_cast<int>(main_axis.x / main_len),
+                static_cast<int>(main_axis.y / main_len)
+            );
+            // 垂直轴向（2D中(x,y)的垂直向量是(-y,x)）
+            obb.axes[1] = Vec2i(-obb.axes[0].y, obb.axes[0].x);
         }
 
-        // 设置 OBB 中心（整数像素）
-        obb.center = Vec2i((min_x + max_x) / 2, (min_y + max_y) / 2);
-        // 轴向为屏幕 X/Y 轴
-        obb.axes[0] = Vec2i(1, 0);
-        obb.axes[1] = Vec2i(0, 1);
-        // 设置半长（整数像素）
-        obb.half_extents[0] = (max_x - min_x) / 2;
-        obb.half_extents[1] = (max_y - min_y) / 2;
+        // 4. 投影顶点到两个轴向，计算半长
+        float min_p = 1e9, max_p = -1e9; // 主轴投影极值
+        float min_q = 1e9, max_q = -1e9; // 垂直轴投影极值
+
+        auto project = [&](const Vec2i& p) {
+            Vec2i dir = p - obb.center;
+            float p_proj = dir.dot(obb.axes[0]); // 主轴投影
+            float q_proj = dir.dot(obb.axes[1]); // 垂直轴投影
+
+            min_p = std::min(min_p, p_proj);
+            max_p = std::max(max_p, p_proj);
+            min_q = std::min(min_q, q_proj);
+            max_q = std::max(max_q, q_proj);
+            };
+
+        project(v0);
+        project(v1);
+        project(v2);
+
+        // 5. 设置半长（取整适配像素）
+        obb.half_extents[0] = static_cast<int>((max_p - min_p) / 2 + 0.5f);
+        obb.half_extents[1] = static_cast<int>((max_q - min_q) / 2 + 0.5f);
+
+        // 防护：半长不能为负
+        obb.half_extents[0] = std::max(obb.half_extents[0], 1);
+        obb.half_extents[1] = std::max(obb.half_extents[1], 1);
 
         return obb;
     }
 
-    // 判断 2D 点（像素坐标）是否在 OBB 内
-    bool contains_point(const Vec2i& point) const {
-        Vec2i dir = point - center;
-        // 检查每个轴向的投影是否在半长范围内
-        for (int i = 0; i < 2; i++) {
-            int proj = dir.dot(axes[i]);
-            if (std::abs(proj) > half_extents[i]) {
-                return false;
-            }
-        }
-        return true;
+    // 判断点是否在OBB内（快速剔除无效像素）
+    bool contains_point(const Vec2i& p) const {
+        Vec2i dir = p - center;
+        // 投影到两个轴向，判断是否在半长范围内
+        int proj_p = dir.dot(axes[0]);
+        int proj_q = dir.dot(axes[1]);
+
+        return std::abs(proj_p) <= half_extents[0] && std::abs(proj_q) <= half_extents[1];
     }
 
-    // 2D OBB 相交检测（分离轴定理 SAT）
-    // 仅检测 2 个自身轴向 + 1 个对方轴向 → 共 4 个潜在分离轴
-    bool intersects(const OBB2D& other) const {
-        // 待检测的分离轴：自身2个轴向 + 对方2个轴向（共4个）
-        Vec2i test_axes[4];
-        test_axes[0] = axes[0];
-        test_axes[1] = axes[1];
-        test_axes[2] = other.axes[0];
-        test_axes[3] = other.axes[1];
+    // 获取OBB的像素遍历范围（最小/最大x/y）
+    void get_bounds(int& min_x, int& max_x, int& min_y, int& max_y) const {
+        // 计算OBB四个顶点
+        Vec2i corner[4] = {
+            center + axes[0] * half_extents[0] + axes[1] * half_extents[1],
+            center + axes[0] * half_extents[0] - axes[1] * half_extents[1],
+            center - axes[0] * half_extents[0] + axes[1] * half_extents[1],
+            center - axes[0] * half_extents[0] - axes[1] * half_extents[1]
+        };
 
-        for (int i = 0; i < 4; i++) {
-            Vec2i axis = test_axes[i];
-            float len = axis.length();
-            if (len < 1e-8) continue; // 跳过零向量
-
-            // 归一化轴（浮点数计算投影）
-            Vec2i axis_norm(
-                static_cast<int>(axis.x / len),
-                static_cast<int>(axis.y / len)
-            );
-
-            // 计算自身 OBB 在轴上的投影区间
-            int self_proj_center = center.dot(axis_norm);
-            int self_extent = std::abs(axes[0].dot(axis_norm)) * half_extents[0] +
-                std::abs(axes[1].dot(axis_norm)) * half_extents[1];
-            int self_min = self_proj_center - self_extent;
-            int self_max = self_proj_center + self_extent;
-
-            // 计算对方 OBB 在轴上的投影区间
-            int other_proj_center = other.center.dot(axis_norm);
-            int other_extent = std::abs(other.axes[0].dot(axis_norm)) * other.half_extents[0] +
-                std::abs(other.axes[1].dot(axis_norm)) * other.half_extents[1];
-            int other_min = other_proj_center - other_extent;
-            int other_max = other_proj_center + other_extent;
-
-            // 投影分离 → OBB 不相交
-            if (self_max < other_min || other_max < self_min) {
-                return false;
-            }
-        }
-        return true; // 所有轴都不分离 → 相交
-    }
-
-    // 扩展：将 3D 顶点投影到 2D 屏幕后构造 OBB
-    static OBB2D from_3d_verts_project(const Vec3f* verts_3d, int count, int width, int height) {
-        std::vector<Vec2i> verts_2d(count);
-        // 投影 3D 顶点到 2D 屏幕（复用你的 project 函数逻辑）
-        for (int i = 0; i < count; i++) {
-            verts_2d[i].x = static_cast<int>((verts_3d[i].x + 1.0f) * width / 2.0f);
-            verts_2d[i].y = static_cast<int>((verts_3d[i].y + 1.0f) * height / 2.0f);
-        }
-        return from_vertices(verts_2d.data(), count);
+        // 找四个顶点的极值（遍历范围）
+        min_x = std::min({ corner[0].x, corner[1].x, corner[2].x, corner[3].x });
+        max_x = std::max({ corner[0].x, corner[1].x, corner[2].x, corner[3].x });
+        min_y = std::min({ corner[0].y, corner[1].y, corner[2].y, corner[3].y });
+        max_y = std::max({ corner[0].y, corner[1].y, corner[2].y, corner[3].y });
     }
 };

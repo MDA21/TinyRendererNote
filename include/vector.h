@@ -18,6 +18,11 @@ struct Vec2i
         return Vec2i(x * scalar, y * scalar);
     }
 
+    Vec2i operator/(int scalar) const {
+        if (scalar == 0) return Vec2i(x, y);
+        return Vec2i(x / scalar, y / scalar);
+    }
+
     int dot(const Vec2i& other) const {
         return x * other.x + y * other.y;
     }

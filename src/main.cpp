@@ -8,7 +8,7 @@
 #include <algorithm>
 #include "../include/model.h"
 #include "../include/tgaimage.h"
-#include "../include/obb2d.h"
+#include "../include/OBB2D.h"
 
 constexpr TGAColor white   = {255, 255, 255, 255}; // attention, BGRA order
 constexpr TGAColor green   = {  0, 255,   0, 255};
@@ -124,29 +124,45 @@ double signed_triangle_area(int ax, int ay, int bx, int by, int cx, int cy) {
 }
 
 void triangle(int ax, int ay, int bx, int by, int cx, int cy, TGAImage& framebuffer, TGAColor color) {
-	int bboxmin_x = std::min({ ax, bx, cx });
-	int bboxmax_x = std::max({ ax, bx, cx });
-	int bboxmin_y = std::min({ ay, by, cy });
-	int bboxmax_y = std::max({ ay, by, cy });
-	double total_area = signed_triangle_area(ax, ay, bx, by, cx, cy);
-	if (total_area < 1)return;
+	// 1. 构造三角形的OBB（对齐主轴，紧凑包围）
+	Vec2i v0(ax, ay), v1(bx, by), v2(cx, cy);
+	OBB2D tri_obb = OBB2D::from_triangle(v0, v1, v2);
 
-	for(int x = bboxmax_x; x >= bboxmin_x; x--) {
-		for(int y = bboxmax_y; y >= bboxmin_y; y--) {
+	// 2. 获取OBB的像素遍历范围（比AABB小）
+	int obb_min_x, obb_max_x, obb_min_y, obb_max_y;
+	tri_obb.get_bounds(obb_min_x, obb_max_x, obb_min_y, obb_max_y);
+
+	// 3. 计算三角形总面积（重心坐标判断用）
+	float total_area = signed_triangle_area(ax, ay, bx, by, cx, cy);
+	if (std::abs(total_area) < 1e-8) return;
+
+	// 4. 遍历OBB范围内的像素（比AABB少）
+	for (int x = obb_min_x; x <= obb_max_x; x++) {
+		for (int y = obb_min_y; y <= obb_max_y; y++) {
+			// 快速剔除OBB外的像素（第一层过滤）
+			if (!tri_obb.contains_point(Vec2i(x, y))) {
+				continue;
+			}
+
+			// 重心坐标判断是否在三角形内（第二层精准过滤）
 			double alpha = signed_triangle_area(x, y, bx, by, cx, cy) / total_area;
-			if (alpha < 0)continue;
+			if (alpha < 0) continue;
 
 			double beta = signed_triangle_area(ax, ay, x, y, cx, cy) / total_area;
-			if (beta < 0)continue;
+			if (beta < 0) continue;
 
 			double gamma = signed_triangle_area(ax, ay, bx, by, x, y) / total_area;
-			if (gamma < 0)continue;
+			if (gamma < 0) continue;
 
+			// 点在三角形内（含边），填充像素
+			
 			framebuffer.set(x, y, color);
 			
 		}
 	}
 }
+
+
 
 int main(int argc, char** argv) {
 	

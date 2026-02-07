@@ -8,6 +8,7 @@
 #include <algorithm>
 #include "../include/model.h"
 #include "../include/tgaimage.h"
+#include "../include/obb2d.h"
 
 constexpr TGAColor white   = {255, 255, 255, 255}; // attention, BGRA order
 constexpr TGAColor green   = {  0, 255,   0, 255};
@@ -68,28 +69,20 @@ int project(float pos, int worh) {
 	int screen_pos = static_cast<int>((pos + 1.0f) * worh / 2.0f);
 	return screen_pos;
 }
-int main(int argc, char** argv) {
-	
 
-    constexpr int width  = 800;
-    constexpr int height = 800;
-    TGAImage framebuffer(width, height, TGAImage::RGB);
-
-	//这里后续可以改成从命令行参数传入模型路径
-    Model model("F:/VSproject/TinyRenderer/obj/diablo3_pose/diablo3_pose.obj");
-
+void loadModelOutline(Model model, TGAImage& framebuffer, int height, int width) {
+	//加载模型轮廓并绘制到framebuffer上
 	int num_faces = model.nfaces();
 	int num_verts = model.nverts();
 	std::vector<Edge> unique_edges;
 	unique_edges.reserve(num_faces * 3);
-	auto start_time = std::chrono::steady_clock::now();
 
-	for(int i = 0; i < num_faces; i++) {
-		for(int j = 0; j < 3; j++) {
+	for (int i = 0; i < num_faces; i++) {
+		for (int j = 0; j < 3; j++) {
 			int v0_idx = model.vert_idx(i, j % 3);
 			int v1_idx = model.vert_idx(i, (j + 1) % 3);
-			if(v0_idx > v1_idx) std::swap(v0_idx, v1_idx);
-			Edge edge = {v0_idx, v1_idx};
+			if (v0_idx > v1_idx) std::swap(v0_idx, v1_idx);
+			Edge edge = { v0_idx, v1_idx };
 			unique_edges.push_back(edge);
 		}
 	}
@@ -98,34 +91,99 @@ int main(int argc, char** argv) {
 	auto last = std::unique(unique_edges.begin(), unique_edges.end());
 	unique_edges.erase(last, unique_edges.end());
 
-	std::cout << "Original edges: " << model.nfaces() * 3 << std::endl;
-	std::cout << "Unique edges:   " << unique_edges.size() << std::endl;
 
 	std::vector<Vec2i> screen_coords(num_verts);
-	
 
 
-		for (int i = 0; i < num_verts; i++) {
-			Vec3f v = model.vert(i);
-			screen_coords[i].x = project(v.x, width);
-			screen_coords[i].y = project(v.y, height);
-		}
+
+	for (int i = 0; i < num_verts; i++) {
+		Vec3f v = model.vert(i);
+		screen_coords[i].x = project(v.x, width);
+		screen_coords[i].y = project(v.y, height);
+	}
 
 
-		for (const auto& edge : unique_edges) {
+	for (const auto& edge : unique_edges) {
 
+
+		Vec2i p0 = screen_coords[edge.u];
+		Vec2i p1 = screen_coords[edge.v];
+
+		// 简单的裁剪检查（可选，防止画出界崩溃）
+		// if (p0.x < 0 || p0.x >= width || p0.y < 0 ...) continue;
+
+		draw_line(p0.x, p0.y, p1.x, p1.y, framebuffer, red);
+	}
+
+
+	framebuffer.write_tga_file("framebuffer.tga");
+}
+
+double signed_triangle_area(int ax, int ay, int bx, int by, int cx, int cy) {
+	return .5 * ((by - ay) * (bx + ax) + (cy - by) * (cx + bx) + (ay - cy) * (ax + cx));
+}
+
+void triangle(int ax, int ay, int bx, int by, int cx, int cy, TGAImage& framebuffer, TGAColor color) {
+	int bboxmin_x = std::min({ ax, bx, cx });
+	int bboxmax_x = std::max({ ax, bx, cx });
+	int bboxmin_y = std::min({ ay, by, cy });
+	int bboxmax_y = std::max({ ay, by, cy });
+	double total_area = signed_triangle_area(ax, ay, bx, by, cx, cy);
+	if (total_area < 1)return;
+
+	for(int x = bboxmax_x; x >= bboxmin_x; x--) {
+		for(int y = bboxmax_y; y >= bboxmin_y; y--) {
+			double alpha = signed_triangle_area(x, y, bx, by, cx, cy) / total_area;
+			if (alpha < 0)continue;
+
+			double beta = signed_triangle_area(ax, ay, x, y, cx, cy) / total_area;
+			if (beta < 0)continue;
+
+			double gamma = signed_triangle_area(ax, ay, bx, by, x, y) / total_area;
+			if (gamma < 0)continue;
+
+			framebuffer.set(x, y, color);
 			
-			Vec2i p0 = screen_coords[edge.u];
-			Vec2i p1 = screen_coords[edge.v];
-
-			// 简单的裁剪检查（可选，防止画出界崩溃）
-			// if (p0.x < 0 || p0.x >= width || p0.y < 0 ...) continue;
-
-			draw_line(p0.x, p0.y, p1.x, p1.y, framebuffer, red);
 		}
+	}
+}
+
+int main(int argc, char** argv) {
 	
-    
-    framebuffer.write_tga_file("framebuffer.tga");
+
+    constexpr int width  = 800;
+    constexpr int height = 800;
+    TGAImage framebuffer(width, height, TGAImage::RGB);
+	const int LOOP_TIMES = 1000;
+	
+
+	//这里后续可以改成从命令行参数传入模型路径
+    Model model("F:/VSproject/TinyRenderer/obj/diablo3_pose/diablo3_pose.obj");
+	//loadModelOutline(model, framebuffer, height, width);
+	auto start_time = std::chrono::steady_clock::now();
+
+	for (int i = 0; i < LOOP_TIMES; i++) {
+
+		for (int i = 0; i < model.nfaces(); i++) {
+			Vec3f v0 = model.vert(model.vert_idx(i, 0));
+			Vec3f v1 = model.vert(model.vert_idx(i, 1));
+			Vec3f v2 = model.vert(model.vert_idx(i, 2));
+			int ax = project(v0.x, width);
+			int ay = project(v0.y, height);
+			int bx = project(v1.x, width);
+			int by = project(v1.y, height);
+			int cx = project(v2.x, width);
+			int cy = project(v2.y, height);
+			TGAColor rnd;
+
+			for (int c = 0; c < 3; c++) rnd[c] = std::rand() % 255;
+
+			triangle(ax, ay, bx, by, cx, cy, framebuffer, rnd);
+		}
+	}
+
+
+	framebuffer.write_tga_file("Triangle.tga");
 
 	auto end_time = std::chrono::steady_clock::now();
 	auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count();
@@ -133,6 +191,7 @@ int main(int argc, char** argv) {
 	std::cout << "程序运行完成！" << std::endl;
 	std::cout << "总运行时间：" << duration_ms << " 毫秒" << std::endl;
 	std::cout << "总运行时间：" << duration_s << " 秒" << std::endl;
+	
 
     return 0;
 }

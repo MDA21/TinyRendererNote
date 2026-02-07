@@ -607,7 +607,7 @@ for (int k = 0; k < LOOP_TIMES; k++) {
 
 ![优化其他](images/chap1/优化其他.png)我的电脑的cpu是i7-12650，不同电脑运行速度不同，但明显比前面的快得多。
 
-最后别忘了删掉测试用的循环
+最后别忘了删掉测试用的循环。
 
 ### 最终的main.cpp
 
@@ -752,4 +752,104 @@ int main(int argc, char** argv) {
 }
 
 ```
+
+
+
+## Triangle Rasterization
+
+简单来说，本节目标是在屏幕上填充三角形线框。
+
+**逐行扫描渲染在此不作赘述，我们把目光放到包围盒的构造和判断点在三角形内外的方法。**
+
+
+
+### 包围盒（Bounding Box）
+
+如果我们运行初始提交，会得到下图：
+
+![triangle_outline](images/chap2/triangle_outline.png)
+
+现在我们要来填充这几个线框，很显然，我们需要判断哪些点是在三角形内部。但是如果扫描整个屏幕，会造成很大的浪费，因为这张图里大部分都是黑色。那么我们可不可以先大致确定一下三角形的范围，然后再判断点是否在三角形内内部呢？从这里引入 **包围盒** 。
+
+#### AABB（Axis-Aligned Bounding Box 轴对齐包围盒）
+
+这是 tinyrenderer 中实现的方式。顾名思义，轴对齐包围盒就是确定出一个矩形，矩形的两条边与xy坐标轴分别平行，画出来长这样：
+
+![aabb](images/chap2/aabb.png)
+
+实现方式也很简单
+
+```c++
+double signed_triangle_area(int ax, int ay, int bx, int by, int cx, int cy) {
+	return .5 * ((by - ay) * (bx + ax) + (cy - by) * (cx + bx) + (ay - cy) * (ax + cx));
+}
+
+void triangle(int ax, int ay, int bx, int by, int cx, int cy, TGAImage& framebuffer, TGAColor color) {
+	int bboxmin_x = std::min({ ax, bx, cx });
+	int bboxmax_x = std::max({ ax, bx, cx });
+	int bboxmin_y = std::min({ ay, by, cy });
+	int bboxmax_y = std::max({ ay, by, cy });
+	double total_area = signed_triangle_area(ax, ay, bx, by, cx, cy);
+	if (total_area < 1)return;
+
+	for(int x = bboxmax_x; x >= bboxmin_x; x--) {
+		for(int y = bboxmax_y; y >= bboxmin_y; y--) {
+			double alpha = signed_triangle_area(x, y, bx, by, cx, cy) / total_area;
+			if (alpha < 0)continue;
+
+			double beta = signed_triangle_area(ax, ay, x, y, cx, cy) / total_area;
+			if (beta < 0)continue;
+
+			double gamma = signed_triangle_area(ax, ay, bx, by, x, y) / total_area;
+			if (gamma < 0)continue;
+
+			framebuffer.set(x, y, color);
+            //这里的输出结果是三角形，而不是包围盒，要得到上图的包围盒的话，直接set不需要判断
+			
+		}
+	}
+}
+```
+
+确实需要判断的点变少了，但是这种包围盒会有一个问题。请看白色的这个**狭长**的三角形，虽然它的面积不大，但是会生成一个很大的AABB，因此我们有别的种类的包围盒可以解决这个问题。
+
+```c++
+for (int i = 0; i < LOOP_TIMES; i++) {
+
+	for (int i = 0; i < model.nfaces(); i++) {
+		Vec3f v0 = model.vert(model.vert_idx(i, 0));
+		Vec3f v1 = model.vert(model.vert_idx(i, 1));
+		Vec3f v2 = model.vert(model.vert_idx(i, 2));
+		int ax = project(v0.x, width);
+		int ay = project(v0.y, height);
+		int bx = project(v1.x, width);
+		int by = project(v1.y, height);
+		int cx = project(v2.x, width);
+		int cy = project(v2.y, height);
+		TGAColor rnd;
+
+		for (int c = 0; c < 3; c++) rnd[c] = std::rand() % 255;
+
+		triangle(ax, ay, bx, by, cx, cy, framebuffer, rnd);
+	}
+}
+```
+
+在继续之前，我们先记录一下用 **AABB + 重心坐标** 循环1000次所需的时间，用diablo模型
+
+![Tryna1](images/chap2/Tryna1.png)
+
+
+
+#### OBB (Oriented Bounding Box 方向包围盒)
+
+沿着三角形的主轴构造包围盒，比 AABB 更紧凑，减少无效像素。
+
+构造逻辑：
+
+1. 取三角形的两条边向量 `AB = B - A`、`AC = C - A`；
+2. 以这两个向量为轴，将三个顶点投影到轴上，取投影的极值；
+3. 用极值围成贴合三角形方向的矩形。
+
+
 
